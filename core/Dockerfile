@@ -1,4 +1,4 @@
-FROM docker.1ms.run/library/node:20-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ COPY web ./web
 RUN pnpm build:web
 
 # ==========================================
-FROM docker.1ms.run/library/node:20-alpine AS prod-deps
+FROM node:20-alpine AS prod-deps
 
 WORKDIR /app
 
@@ -36,7 +36,7 @@ RUN pnpm -C core install --prod --frozen-lockfile
 
 # ==========================================
 
-FROM docker.1ms.run/library/node:20-alpine AS runner
+FROM node:20-alpine AS runner
 
 WORKDIR /app/core
 
