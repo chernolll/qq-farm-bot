@@ -55,6 +55,8 @@ const qqQrImage = ref('')
 const qqStatus = ref('点击获取二维码')
 const qqError = ref('')
 const qqLoading = ref(false)
+const qqChecking = ref(false)
+const qqReachable = ref(true)
 const qqQrCreatedAt = ref(0)
 const captureEnabled = ref(false)
 const captureLoading = ref(false)
@@ -190,16 +192,18 @@ const { pause: stopCaptureCheck, resume: startCaptureCheck } = useIntervalFn(asy
 }, 1500, { immediate: false })
 
 const { pause: stopQqCheck, resume: startQqCheck } = useIntervalFn(async () => {
-  if (activeTab.value !== 'qq' || !qqTaskId.value || qqLoading.value)
+  if (activeTab.value !== 'qq' || !qqTaskId.value || qqLoading.value || qqChecking.value)
     return
   if (qqQrCreatedAt.value && Date.now() - qqQrCreatedAt.value >= QQ_QR_AUTO_REFRESH_MS) {
     await startQqLogin()
     return
   }
+  qqChecking.value = true
   try {
     const { data } = await api.post(`/api/napcat-login/tasks/${qqTaskId.value}/status`, undefined, { timeout: 20000, skipErrorToast: true } as any)
     if (!data?.ok)
       throw new Error(data?.error || '查询扫码状态失败')
+    qqReachable.value = true
     qqStatus.value = data.data.status === 'scanned' ? '已扫码，请在 QQ 中确认' : '请使用 QQ 扫码登录'
     if (data.data.status === 'confirmed') {
       stopQqCheck()
@@ -214,17 +218,33 @@ const { pause: stopQqCheck, resume: startQqCheck } = useIntervalFn(async () => {
   }
   catch (e: any) {
     stopQqCheck()
-    qqError.value = e.response?.data?.error || e.message || 'QQ 扫码登录失败'
+    const message = e.response?.data?.error || e.message || 'QQ 扫码登录失败'
+    if (String(message).includes('NapCat 无响应')) {
+      qqReachable.value = false
+      qqStatus.value = 'NapCat 无响应，正在等待自动重启…'
+    }
+    qqError.value = message
   }
-  finally { qqLoading.value = false }
-}, 1500, { immediate: false })
+  finally {
+    qqChecking.value = false
+    qqLoading.value = false
+  }
+}, 3000, { immediate: false })
 
 async function loadQqCapability() {
   try {
     const { data } = await api.get('/api/napcat-login/capability')
     qqEnabled.value = data?.ok && data.data?.enabled === true
+    if (qqEnabled.value) {
+      qqReachable.value = data.data?.reachable !== false
+      if (!qqReachable.value && activeTab.value === 'qq' && !qqError.value)
+        qqError.value = 'NapCat 当前无响应（可能正在启动或已卡死），稍后会自动重启，请稍候再试'
+    }
   }
-  catch { qqEnabled.value = false }
+  catch {
+    qqEnabled.value = false
+    qqReachable.value = false
+  }
 }
 
 async function cancelQqTask() {

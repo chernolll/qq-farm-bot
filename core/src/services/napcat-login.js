@@ -29,6 +29,22 @@ function isConfigured() {
     && Boolean(cfg.webui && cfg.webuiToken && cfg.plugin && cfg.pluginToken);
 }
 
+/**
+ * 快速探测 NapCat WebUI 是否仍有响应。
+ * 卡死的 NapCat 会接受 TCP 连接但永远不回包，因此必须在真正调用前先探测，
+ * 避免前端和后端共同等待 30s 以上。
+ */
+async function probe(timeout = 2500) {
+  const cfg = config();
+  if (!cfg.webui) return false;
+  try {
+    await fetch(cfg.webui, { method: 'GET', signal: AbortSignal.timeout(timeout) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function requestJson(url, { method = 'POST', body, token = '', timeout = 15000 } = {}) {
   let response;
   try {
@@ -39,7 +55,11 @@ async function requestJson(url, { method = 'POST', body, token = '', timeout = 1
       signal: AbortSignal.timeout(timeout),
     });
   } catch (error) {
-    throw new Error(`无法连接 NapCat: ${error.message}`);
+    const message = String((error && error.message) || error || '');
+    const isTimeout = (error && error.name === 'TimeoutError') || /aborted due to timeout|timed out/i.test(message);
+    throw new Error(isTimeout
+      ? 'NapCat 无响应，可能已卡死；请稍后重试，若持续无响应请重启 napcat 容器'
+      : `无法连接 NapCat: ${message}`);
   }
   const text = await response.text();
   let payload = {};
@@ -137,6 +157,9 @@ async function release(task, cleanup = '') {
 
 async function create(owner, { refresh = false } = {}) {
   if (!isConfigured()) throw new Error('NapCat 扫码登录未配置');
+  if (!(await probe())) {
+    throw new Error('NapCat 无响应，可能已卡死；请稍后重试，若持续无响应请重启 napcat 容器');
+  }
   const current = tasks.get(activeTaskId);
   if (current && current.expiresAt > Date.now()) {
     if (current.owner !== owner) throw new Error('已有 QQ 扫码任务正在进行，请稍后再试');
@@ -177,19 +200,24 @@ async function status(id, owner) {
   const task = ownedTask(id, owner);
   if (task.result) return taskPublic(task);
   if (task.expiresAt <= Date.now()) { await release(task, task.status === 'confirmed' ? 'logout' : '').catch(() => {}); throw new Error('登录任务已过期'); }
-  const state = await webUi('/QQLogin/CheckLoginStatus');
-  const text = `${state.status || ''} ${state.message || ''}`.toLowerCase();
-  if (state.isLogin === true) {
-    try {
-      const user = profile(await webUi('/QQLogin/GetQQLoginInfo'));
-      if (user.uin) {
-        task.user = user;
-        task.status = 'confirmed';
-      }
-    } catch {}
-  } else if (/scanned|待确认|等待确认/.test(text)) task.status = 'scanned';
-  else if (/expired|timeout|过期|失效/.test(text)) task.status = 'expired';
-  return taskPublic(task);
+  // 单飞：轮询期间的并发请求复用同一个结果，避免叠加请求压垮 NapCat。
+  if (task.statusPromise) return task.statusPromise;
+  task.statusPromise = (async () => {
+    const state = await webUi('/QQLogin/CheckLoginStatus');
+    const text = `${state.status || ''} ${state.message || ''}`.toLowerCase();
+    if (state.isLogin === true) {
+      try {
+        const user = profile(await webUi('/QQLogin/GetQQLoginInfo'));
+        if (user.uin) {
+          task.user = user;
+          task.status = 'confirmed';
+        }
+      } catch {}
+    } else if (/scanned|待确认|等待确认/.test(text)) task.status = 'scanned';
+    else if (/expired|timeout|过期|失效/.test(text)) task.status = 'expired';
+    return taskPublic(task);
+  })().finally(() => { task.statusPromise = null; });
+  return task.statusPromise;
 }
 
 async function code(id, owner) {
@@ -243,4 +271,4 @@ async function cancel(id, owner) {
   await release(task, task.status === 'confirmed' ? 'logout' : task.status === 'scanned' ? 'restart' : '');
 }
 
-module.exports = { APP_ID, isConfigured, create, status, code, cancel };
+module.exports = { APP_ID, isConfigured, probe, create, status, code, cancel };

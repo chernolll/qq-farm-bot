@@ -105,3 +105,59 @@ test('NapCat clears a persisted offline session before requesting a new QR code'
   assert.ok(calls.indexOf('/api/QQLogin/RestartNapCat') < calls.indexOf('/api/QQLogin/GetQQLoginQrcode'));
   await service.cancel(task.taskId, 'alice');
 });
+
+test('NapCat create fails fast with a clear error when WebUI is unresponsive', async (t) => {
+  Object.assign(process.env, {
+    NAPCAT_LOGIN_ENABLED: 'true',
+    NAPCAT_TOKEN: 'napcat-test-token',
+    NAPCAT_WEBUI_URL: 'http://napcat-hung.test/api',
+    NAPCAT_OPENAUTH_URL: 'http://napcat-hung.test/plugin',
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    const error = new Error('The operation was aborted due to timeout');
+    error.name = 'TimeoutError';
+    throw error;
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  delete require.cache[require.resolve('../src/services/napcat-login')];
+  const service = require('../src/services/napcat-login');
+  await assert.rejects(() => service.create('alice'), /NapCat 无响应/);
+});
+
+test('NapCat status polling reuses an in-flight request (single-flight)', async (t) => {
+  Object.assign(process.env, {
+    NAPCAT_LOGIN_ENABLED: 'true',
+    NAPCAT_TOKEN: 'napcat-test-token',
+    NAPCAT_WEBUI_URL: 'http://napcat-single.test/api',
+    NAPCAT_OPENAUTH_URL: 'http://napcat-single.test/plugin',
+  });
+  const originalFetch = globalThis.fetch;
+  let checkCalls = 0;
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(String(url)).pathname;
+    if (pathname.endsWith('/auth/login')) return json({ code: 0, data: { Credential: 'credential' } });
+    if (pathname.endsWith('/QQLogin/CheckLoginStatus')) {
+      checkCalls += 1;
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return json({ code: 0, data: { isLogin: false } });
+    }
+    if (pathname.endsWith('/QQLogin/GetQQLoginQrcode')) return json({ code: 0, data: { qrcode: 'https://example.test/qr' } });
+    return json({ code: 0 });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  delete require.cache[require.resolve('../src/services/napcat-login')];
+  const service = require('../src/services/napcat-login');
+  const task = await service.create('alice');
+  checkCalls = 0;
+  const [first, second] = await Promise.all([
+    service.status(task.taskId, 'alice'),
+    service.status(task.taskId, 'alice'),
+  ]);
+  assert.equal(checkCalls, 1);
+  assert.equal(first.status, 'waiting_scan');
+  assert.equal(second.status, 'waiting_scan');
+  await service.cancel(task.taskId, 'alice');
+});

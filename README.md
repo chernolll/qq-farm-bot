@@ -173,6 +173,17 @@ QQ 登录记录中的设备名称，然后由 Compose 启动农场和 NapCat 两
 通过 Docker Desktop 运行相应 Linux 架构镜像。官方没有 32 位 `linux/386` 镜像。可在 `.env`
 中通过 `NAPCAT_IMAGE` 选择示例文件列出的其他多架构版本。
 
+开启 `COMPOSE_PROFILES=napcat` 时会一并启动 `autoheal` 服务：NapCat 偶发死锁时进程仍在、
+但 6099 端口不再响应，容器健康检查会将其标记为 unhealthy，由 `autoheal` 自动重启，无需手动
+重启整个 Docker。若需更换 autoheal 镜像，可在 `.env` 中设置 `AUTOHEAL_IMAGE`。
+
+海外或链路不稳定时，可让 NapCat 的 QQ 流量走代理（`.env`）：
+
+```dotenv
+NAPCAT_PROXY_ADDRESS=127.0.0.1
+NAPCAT_PROXY_PORT=7890
+```
+
 ### 微信扫码
 
 1. 进入“添加账号 → 微信扫码”。

@@ -61,12 +61,43 @@ services:
     environment:
       NAPCAT_UID: "${NAPCAT_UID:-1000}"
       NAPCAT_GID: "${NAPCAT_GID:-1000}"
+      # 可选：让 QQ 走代理（海外/链路不稳时更稳定）。留空则不启用。
+      NAPCAT_PROXY_ADDRESS: "${NAPCAT_PROXY_ADDRESS:-}"
+      NAPCAT_PROXY_PORT: "${NAPCAT_PROXY_PORT:-}"
     ports:
       - "127.0.0.1:6099:6099"
     volumes:
       - ../data/napcat/config:/app/napcat/config
       - ../data/napcat/QQ:/app/.config/QQ
       - ../data/napcat/auth:/app/napcat-auth
+    # NapCat 卡死时表现为「进程活着但 6099 不回包」，健康检查据此标记 unhealthy。
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -m 5 -o /dev/null http://127.0.0.1:6099/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    labels:
+      - autoheal=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # NapCat 卡死时自动重启它，避免必须手动重启整个 docker。
+  # 仅随 napcat profile 启动；需要挂载 docker.sock 才能重启兄弟容器。
+  autoheal:
+    profiles: ["napcat"]
+    image: "${AUTOHEAL_IMAGE:-willfarrell/autoheal:latest}"
+    container_name: qq-farm-autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "30"
+      AUTOHEAL_START_PERIOD: "180"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     logging:
       driver: json-file
       options:
