@@ -2,6 +2,7 @@ import { useStorage } from '@vueuse/core'
 import axios from 'axios'
 import NProgress from 'nprogress'
 import { createRouter, createWebHistory } from 'vue-router'
+import { useUserStore } from '@/stores/user'
 import { menuRoutes } from './menu'
 import 'nprogress/nprogress.css'
 
@@ -9,17 +10,17 @@ NProgress.configure({ showSpinner: false })
 
 const adminToken = useStorage('admin_token', '')
 const userInfo = useStorage('user_info', '')
-let sessionPromise: Promise<boolean> | null = null
-let sessionBootstrapAttempted = false
+let autoLoginPromise: Promise<boolean> | null = null
+let autoLoginAttempted = false
 
-async function ensureAdminSession() {
-  // 管理页面采用宽松鉴权：已有 token 时直接放行，不在导航时重复校验。
-  if (adminToken.value || sessionBootstrapAttempted)
+/** 未启用登录时的免登录流程（保持旧行为）。 */
+async function ensureAutoLogin() {
+  if (adminToken.value || autoLoginAttempted)
     return true
 
-  if (!sessionPromise) {
-    sessionBootstrapAttempted = true
-    sessionPromise = axios.post('/api/auto-login', {}, { timeout: 6000 })
+  if (!autoLoginPromise) {
+    autoLoginAttempted = true
+    autoLoginPromise = axios.post('/api/auto-login', {}, { timeout: 6000 })
       .then(({ data }) => {
         if (!data?.ok)
           return false
@@ -34,14 +35,20 @@ async function ensureAdminSession() {
         return true
       })
       .catch(() => false)
-      .finally(() => { sessionPromise = null })
+      .finally(() => { autoLoginPromise = null })
   }
-  return sessionPromise
+  return autoLoginPromise
 }
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/Login.vue'),
+      meta: { public: true },
+    },
     {
       path: '/',
       component: () => import('@/layouts/DefaultLayout.vue'),
@@ -52,15 +59,34 @@ const router = createRouter({
       })),
     },
     { path: '/admin', redirect: '/settings?tab=system' },
-    { path: '/login', redirect: '/' },
     { path: '/renewal', redirect: '/' },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })
 
-router.beforeEach(async () => {
+router.beforeEach(async (to) => {
   NProgress.start()
-  await ensureAdminSession()
+
+  const userStore = useUserStore()
+  const authRequired = await userStore.fetchAuthConfig()
+
+  // 未启用登录：维持免登录行为，访问登录页直接回首页。
+  if (!authRequired) {
+    if (to.path === '/login')
+      return { path: '/' }
+    await ensureAutoLogin()
+    return true
+  }
+
+  // 已启用登录。
+  if (to.path === '/login')
+    return adminToken.value ? { path: '/' } : true
+
+  if (!adminToken.value) {
+    const redirect = to.fullPath && to.fullPath !== '/' ? to.fullPath : undefined
+    return { path: '/login', query: redirect ? { redirect } : {} }
+  }
+
   return true
 })
 

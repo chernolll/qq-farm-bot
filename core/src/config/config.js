@@ -1,6 +1,13 @@
 const process = require('node:process');
 
+// 加载根目录 .env（本地运行时），Docker 由 compose 注入环境变量。
+require('./env');
+
 const DEFAULT_CLIENT_VERSION = '1.14.0.4_20260911';
+
+function toBooleanFlag(value) {
+    return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
 
 function parseClientVersion(value) {
     const match = String(value || '').trim().match(/^(\d+(?:\.\d+){2,4})_(\d{8})$/);
@@ -49,7 +56,11 @@ const CONFIG = {
     friendCheckIntervalMin: 12000,     // 好友检查最小间隔 12秒
     friendCheckIntervalMax: 15000,     // 好友检查最大间隔 15秒
     adminPort: Number(process.env.ADMIN_PORT),
-    adminPassword: process.env.ADMIN_PASSWORD
+    adminPassword: process.env.ADMIN_PASSWORD,
+    // 面板登录：AUTH_ENABLED 为显式总开关，需同时配置用户名和密码才会生效。
+    authEnabled: toBooleanFlag(process.env.AUTH_ENABLED),
+    authUsername: String(process.env.AUTH_USERNAME || ''),
+    authPassword: String(process.env.AUTH_PASSWORD || '')
 };
 
 /**

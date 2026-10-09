@@ -112,6 +112,29 @@ docker compose up -d --build
 CAPTURE_ADVERTISE_IPS=192.168.1.100,100.64.0.2
 ```
 
+### 面板访问密码（公网部署）
+
+默认情况下管理面板免登录，适合本机或内网使用。需要部署到公网、用域名访问时，可在仓库
+根目录 `.env` 中开启登录保护：
+
+```dotenv
+AUTH_ENABLED=true
+AUTH_USERNAME=admin
+AUTH_PASSWORD=请设置一个足够强的密码
+```
+
+开启后会：
+
+- 未登录访问任何页面或接口都会跳转到登录页，登录成功后才可查看数据；
+- `AUTH_ENABLED=true` 必须同时配置 `AUTH_USERNAME` 与 `AUTH_PASSWORD` 才会生效，否则仍保持
+  免登录（启动日志会给出提示）；
+- 仅提供登录，不提供注册；登录失败有次数限流；
+- Docker 部署时这些变量已在 `docker-compose.yml` 中透传，无需额外修改；
+- 源码运行时后端会自动读取仓库根目录 `.env`。
+
+> 公网部署请务必放在 HTTPS 反向代理（Nginx / Caddy 等）之后，并且不要将抓包代理端口
+> `18000` 暴露到公网。
+
 ## 🔑 登录方式
 
 项目支持微信扫码、QQ/NapCat 扫码、手动填码和手机抓包等账号添加方式。

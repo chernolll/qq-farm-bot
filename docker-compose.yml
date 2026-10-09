@@ -22,6 +22,10 @@ services:
       FARM_DATA_DIR: /app/core/data
       CAPTURE_ADVERTISE_IPS: "${CAPTURE_ADVERTISE_IPS:-auto}"
       NAPCAT_LOGIN_ENABLED: "${NAPCAT_LOGIN_ENABLED:-false}"
+      # 面板登录：AUTH_ENABLED=true 且同时配置用户名与密码时生效；否则保持免登录。
+      AUTH_ENABLED: "${AUTH_ENABLED:-false}"
+      AUTH_USERNAME: "${AUTH_USERNAME:-}"
+      AUTH_PASSWORD: "${AUTH_PASSWORD:-}"
       NAPCAT_WEBUI_URL: http://napcat:6099/api
       NAPCAT_OPENAUTH_URL: http://napcat:6099/plugin/qq-miniapp-openauth/api
       # 抓包服务默认关闭；在面板“系统配置 → Code/GID 抓取服务”开启后才会运行。
@@ -31,7 +35,7 @@ services:
       # CAPTURE_ADVERTISE_IPS=192.168.1.100,100.64.0.2
 
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3007/api/status"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3007/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3

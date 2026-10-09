@@ -73,6 +73,7 @@ const DEFAULT_ALLOWED_ORIGINS = [
 const PUBLIC_API_PATHS = new Set([
   "/login",
   "/auto-login",
+  "/auth/config",
   "/qr/create",
   "/qr/check",
   "/game-version",

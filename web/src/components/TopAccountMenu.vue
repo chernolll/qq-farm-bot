@@ -8,9 +8,12 @@ import AccountModal from '@/components/AccountModal.vue'
 import RemarkModal from '@/components/RemarkModal.vue'
 import { getPlatformClass, getPlatformLabel, useAccountStore } from '@/stores/account'
 import { useStatusStore } from '@/stores/status'
+import { useUserStore } from '@/stores/user'
 
 const accountStore = useAccountStore()
 const statusStore = useStatusStore()
+const userStore = useUserStore()
+const authRequired = computed(() => userStore.authRequired)
 const { accounts, currentAccount } = storeToRefs(accountStore)
 const { currentStatusReady, status } = storeToRefs(statusStore)
 
@@ -223,6 +226,11 @@ function openRemarkModal(acc: any) {
   closeDropdown()
 }
 
+async function handleLogout() {
+  closeDropdown()
+  await userStore.logout()
+}
+
 async function handleAccountSaved() {
   await accountStore.fetchAccounts()
   showAccountModal.value = false
@@ -351,6 +359,14 @@ async function handleAccountSaved() {
             <div class="i-carbon-add-alt" />
             <span>管理账号</span>
           </router-link>
+          <button
+            v-if="authRequired"
+            class="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-500 transition-colors hover:bg-red-50/60 dark:hover:bg-red-900/20"
+            @click="handleLogout"
+          >
+            <div class="i-carbon-logout" />
+            <span>退出登录</span>
+          </button>
         </div>
       </div>
     </Teleport>
