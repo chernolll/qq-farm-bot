@@ -624,7 +624,7 @@ function registerAdminCaptureRoutes({
       const session = await captureRequest(config, "/api/sessions", {
         method: "POST",
         sessionId: remoteSessionId,
-        body: { sessionId: remoteSessionId },
+        body: { sessionId: remoteSessionId, platform },
       });
       const flow = {
         id: flowId,

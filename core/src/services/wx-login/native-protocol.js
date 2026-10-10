@@ -37,6 +37,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getNativeWxLoginCode = getNativeWxLoginCode;
+exports.targets = targets;
+exports.staticTargets = staticTargets;
 const node_crypto_1 = __importDefault(require("node:crypto"));
 const net = __importStar(require("node:net"));
 const U8 = Buffer.from;
@@ -457,24 +459,81 @@ function asRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function errorMessage(error) {
-    return error instanceof Error ? error.message : String(error);
+    const base = error instanceof Error ? error.message : String(error);
+    const cause = error && typeof error === "object" ? error.cause : null;
+    const detail = cause ? (cause.code || cause.message || String(cause)) : "";
+    return detail && !base.includes(String(detail)) ? `${base} (${detail})` : base;
+}
+// 内置 MMTLS 目标兜底：HTTPDNS（aedns.weixin.qq.com）在部分海外/容器网络仅 IPv6 可达，
+// 失败时不能再直接抛错，否则整个 wx.login 换 code 流程会以 "fetch failed" 中止。
+// IP 会随腾讯调度变化，可用环境变量覆盖：
+//   WX_MMTLS_TARGETS_LONG="ip[:port],ip[:port]"   （省略端口时展开为协议默认端口）
+//   WX_MMTLS_TARGETS_SHORT="ip[:port],..."
+const STATIC_TARGETS = {
+    long: ["43.159.233.159", "43.129.2.9", "43.129.107.157", "101.32.212.51"],
+    short: ["129.226.103.197"]
+};
+const PORT_ORDER = { long: [8080, 443, 5000, 80], short: [443, 8080, 80] };
+function envTargets(kind) {
+    const name = kind === "long" ? "WX_MMTLS_TARGETS_LONG" : "WX_MMTLS_TARGETS_SHORT";
+    const raw = String(process.env[name] || "").trim();
+    if (!raw)
+        return null;
+    const out = [];
+    for (const entry of raw.split(",")) {
+        const [ip, portText] = entry.trim().split(":");
+        if (!ip)
+            continue;
+        const port = Number.parseInt(portText, 10);
+        if (Number.isInteger(port) && port > 0 && port <= 65535) {
+            out.push({ ip, port });
+        }
+        else {
+            for (const fallbackPort of (PORT_ORDER[kind] || []))
+                out.push({ ip, port: fallbackPort });
+        }
+    }
+    return out.length ? out : null;
+}
+function staticTargets(kind) {
+    const ips = STATIC_TARGETS[kind] || [];
+    const ports = PORT_ORDER[kind] || [];
+    return ips.flatMap((ip) => ports.map((port) => ({ ip, port })));
 }
 async function targets(kind) {
-    const r = await fetch("http://aedns.weixin.qq.com/cgi-bin/default/getdns?clientversion=0&devicetype=Windows&uin=0&format=json", { headers: { "User-Agent": "MicroMessenger Client" } });
-    const data = await r.json();
-    const dns = asRecord(asRecord(data).dns);
-    const domainList = Array.isArray(dns.domainlist) ? dns.domainlist.map(asRecord) : [];
-    const item = domainList.find((entry) => entry.name === (kind === "long" ? "longcloud.weixin.com" : "shortcloud.weixin.com"));
-    const proto = kind === "long" ? "mmtlsovertcp" : "http";
-    const protocolList = Array.isArray(item?.protocollist) ? item.protocollist.map(asRecord) : [];
-    const portList = protocolList.find((entry) => entry.name === proto)?.portlist;
-    const ports = Array.isArray(portList) ? portList.filter((port) => typeof port === "number") : [];
-    // 端口排序：8080/443/5000 优先（服务器响应快，失败也立即拒绝），80 最后（最常挂起到 read timeout）
-    const orderedPorts = [8080, 443, 5000, 80].filter((p) => ports.includes(p));
-    const ipList = Array.isArray(item?.iplist) ? item.iplist.map(asRecord) : [];
-    const ips = ipList.map((entry) => entry.ip).filter((ip) => typeof ip === "string" && ip.length > 0);
-    const out = ips.flatMap((ip) => orderedPorts.map((port) => ({ ip, port })));
-    return out.length ? out : [{ ip: kind === "long" ? "180.153.202.85" : "120.241.131.173", port: kind === "long" ? 8080 : 80 }];
+    const override = envTargets(kind);
+    if (override)
+        return override;
+    try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8e3);
+        let data;
+        try {
+            const r = await fetch("http://aedns.weixin.qq.com/cgi-bin/default/getdns?clientversion=0&devicetype=Windows&uin=0&format=json", { headers: { "User-Agent": "MicroMessenger Client" }, signal: controller.signal });
+            data = await r.json();
+        }
+        finally {
+            clearTimeout(timer);
+        }
+        const dns = asRecord(asRecord(data).dns);
+        const domainList = Array.isArray(dns.domainlist) ? dns.domainlist.map(asRecord) : [];
+        const item = domainList.find((entry) => entry.name === (kind === "long" ? "longcloud.weixin.com" : "shortcloud.weixin.com"));
+        const proto = kind === "long" ? "mmtlsovertcp" : "http";
+        const protocolList = Array.isArray(item?.protocollist) ? item.protocollist.map(asRecord) : [];
+        const portList = protocolList.find((entry) => entry.name === proto)?.portlist;
+        const ports = Array.isArray(portList) ? portList.filter((port) => typeof port === "number") : [];
+        // 端口排序：8080/443/5000 优先（服务器响应快，失败也立即拒绝），80 最后（最常挂起到 read timeout）
+        const orderedPorts = [8080, 443, 5000, 80].filter((p) => ports.includes(p));
+        const ipList = Array.isArray(item?.iplist) ? item.iplist.map(asRecord) : [];
+        const ips = ipList.map((entry) => entry.ip).filter((ip) => typeof ip === "string" && ip.length > 0);
+        const out = ips.flatMap((ip) => orderedPorts.map((port) => ({ ip, port })));
+        if (out.length)
+            return out;
+    }
+    catch (error) {
+        console.warn(`[wx-login] HTTPDNS 获取 ${kind} 目标失败，改用内置兜底目标: ${errorMessage(error)}`);
+    }
+    return staticTargets(kind);
 }
 async function getNativeWxLoginCode(loginBuffer, appId) {
     const { req, device, host } = manualRequest(loginBuffer, node_crypto_1.default.randomBytes(32));
